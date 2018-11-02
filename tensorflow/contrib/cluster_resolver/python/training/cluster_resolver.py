@@ -53,11 +53,28 @@ class ClusterResolver(object):
     raise NotImplementedError(
         'cluster_spec is not implemented for {}.'.format(self))
 
+  @abc.abstractmethod
+  def master(self, task_type=None, task_index=None):
+    """Retrieves the name or URL of the session master.
+
+    Args:
+      task_type: (Optional) The type of the TensorFlow task of the master.
+      task_index: (Optional) The index of the TensorFlow task of the master.
+
+    Returns:
+      The name or URL of the session master.
+
+    Implementors of this function must take care in ensuring that the master
+    returned is up-to-date at the time to calling this function. This usually
+    means retrieving the master every time this function is invoked.
+    """
+    raise NotImplementedError('master is not implemented for {}.'.format(self))
+
 
 class SimpleClusterResolver(ClusterResolver):
   """Simple implementation of ClusterResolver that accepts a ClusterSpec."""
 
-  def __init__(self, cluster_spec):
+  def __init__(self, cluster_spec, master=''):
     """Creates a SimpleClusterResolver from a ClusterSpec."""
     super(SimpleClusterResolver, self).__init__()
 
@@ -65,9 +82,31 @@ class SimpleClusterResolver(ClusterResolver):
       raise TypeError('cluster_spec must be a ClusterSpec.')
     self._cluster_spec = cluster_spec
 
+    if not isinstance(master, str):
+      raise TypeError('master must be a string.')
+    self._master = master
+
   def cluster_spec(self):
     """Returns the ClusterSpec passed into the constructor."""
     return self._cluster_spec
+
+  def master(self, task_type=None, task_index=None):
+    """Returns the master address to use when creating a session.
+
+    Args:
+      task_type: (Optional) The type of the TensorFlow task of the master.
+      task_index: (Optional) The index of the TensorFlow task of the master.
+
+    Returns:
+      The name or URL of the session master.
+
+    If a task_type and task_index is given, this will override the `master`
+    string passed into the initialization function.
+    """
+    if task_type and task_index:
+      return self.cluster_spec().task_address(task_type, task_index)
+
+    return self._master
 
 
 class UnionClusterResolver(ClusterResolver):
@@ -87,8 +126,12 @@ class UnionClusterResolver(ClusterResolver):
 
     Raises:
       TypeError: If any argument is not a subclass of `ClusterResolvers`.
+      ValueError: If there are no arguments passed.
     """
     super(UnionClusterResolver, self).__init__()
+
+    if not args:
+      raise ValueError('At least one ClusterResolver is required.')
 
     for cluster_resolver in args:
       if not isinstance(cluster_resolver, ClusterResolver):
@@ -169,3 +212,21 @@ class UnionClusterResolver(ClusterResolver):
           merged_cluster[job_name].update(task_dict)
 
     return ClusterSpec(merged_cluster)
+
+  def master(self, task_type=None, task_index=None):
+    """Returns the master address to use when creating a session.
+
+    This usually returns the master from the first ClusterResolver passed in,
+    but you can override this by specifying the task_type and task_index.
+
+    Args:
+      task_type: (Optional) The type of the TensorFlow task of the master.
+      task_index: (Optional) The index of the TensorFlow task of the master.
+
+    Returns:
+      The name or URL of the session master.
+    """
+    if task_type and task_index:
+      return self.cluster_spec().task_address(task_type, task_index)
+
+    return self._cluster_resolvers[0].master()

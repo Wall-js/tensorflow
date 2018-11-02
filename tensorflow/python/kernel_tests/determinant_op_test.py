@@ -28,6 +28,7 @@ from tensorflow.python.ops import gen_linalg_ops
 from tensorflow.python.ops import linalg_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variables
+from tensorflow.python.platform import benchmark
 from tensorflow.python.platform import test
 
 
@@ -61,11 +62,11 @@ class DeterminantOpTest(test.TestCase):
         atol=5e-5)
 
   def _compareDeterminant(self, matrix_x):
-    with self.test_session(use_gpu=True):
+    with self.cached_session(use_gpu=True):
       self._compareDeterminantBase(matrix_x,
                                    linalg_ops.matrix_determinant(matrix_x))
       self._compareLogDeterminantBase(
-          matrix_x, gen_linalg_ops._log_matrix_determinant(matrix_x))
+          matrix_x, gen_linalg_ops.log_matrix_determinant(matrix_x))
 
   def testBasic(self):
     # 2x2 matrices
@@ -126,11 +127,10 @@ class DeterminantOpTest(test.TestCase):
     self._compareDeterminant(
         np.random.rand(3, 4, 5, 2, 2).astype(np.complex128))
 
-  def testOverflow(self):
+  def testInfiniteDeterminant(self):
     max_double = np.finfo("d").max
     huge_matrix = np.array([[max_double, 0.0], [0.0, max_double]])
-    with self.assertRaisesOpError("not finite"):
-      self._compareDeterminant(huge_matrix)
+    self._compareDeterminant(huge_matrix)
 
   def testNonSquareMatrix(self):
     # When the determinant of a non-square matrix is attempted we should return
@@ -150,7 +150,7 @@ class DeterminantOpTest(test.TestCase):
     self._compareDeterminant(np.empty([2, 0, 0]))
 
   def testConcurrentExecutesWithoutError(self):
-    with self.test_session(use_gpu=True) as sess:
+    with self.session(use_gpu=True) as sess:
       matrix1 = random_ops.random_normal([5, 5], seed=42)
       matrix2 = random_ops.random_normal([5, 5], seed=42)
       det1 = linalg_ops.matrix_determinant(matrix1)
@@ -186,8 +186,8 @@ class MatrixDeterminantBenchmark(test.Benchmark):
 
   def benchmarkMatrixDeterminantOp(self):
     for shape in self.shapes:
-      with ops.Graph().as_default(), session.Session() as sess, ops.device(
-          "/cpu:0"):
+      with ops.Graph().as_default(), session.Session(
+          config=benchmark.benchmark_config()) as sess, ops.device("/cpu:0"):
         matrix = self._GenerateMatrix(shape)
         d = linalg_ops.matrix_determinant(matrix)
         variables.global_variables_initializer().run()
@@ -199,8 +199,8 @@ class MatrixDeterminantBenchmark(test.Benchmark):
             name="matrix_determinant_cpu_{shape}".format(shape=shape))
 
       if test.is_gpu_available(True):
-        with ops.Graph().as_default(), session.Session() as sess, ops.device(
-            "/gpu:0"):
+        with ops.Graph().as_default(), session.Session(
+            config=benchmark.benchmark_config()) as sess, ops.device("/gpu:0"):
           matrix = self._GenerateMatrix(shape)
           d = linalg_ops.matrix_determinant(matrix)
           variables.global_variables_initializer().run()

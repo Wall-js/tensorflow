@@ -19,40 +19,67 @@ limitations under the License.
 #include <list>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/types/span.h"
 #include "tensorflow/compiler/xla/map_util.h"
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/core/lib/core/status.h"
-#include "tensorflow/core/lib/gtl/array_slice.h"
-#include "tensorflow/core/lib/gtl/flatmap.h"
 #include "tensorflow/core/platform/types.h"
 
 namespace xla {
 
 class HloInstruction;
 
-// A class for computing and representing reachability between HloInstructions.
+// A class for representing reachability between HloInstructions.
+//
+// !!! THIS CLASS DOES NOT COMPUTE REACHABILITY !!! It has an adjacency matrix
+// and it is up to the user of the class to set the adjacency matrix such that
+// it represents reachability, i.e. such that it is transitive. That the graph
+// be transitive is thus not an invariant of this class, but it is required for
+// the name of the class and its methods to make sense.
 class HloReachabilityMap {
  public:
-  // Sets up an empty reachable matrix for the full set of instructions
-  // specified in 'instructions'.
-  explicit HloReachabilityMap(const std::list<HloInstruction*>& instructions);
+  // Sets up a graph with no edges and where the nodes correspond to the given
+  // instructions.
+  explicit HloReachabilityMap(
+      absl::Span<const HloInstruction* const> instructions);
 
   // Set the reachability set of 'instruction' to the union of the reachability
   // sets of 'inputs'. Upon return, IsReachable(x, instruction) where
   // 'x' is not 'instruction' will return true iff IsReachable(x, input) is true
   // for some 'input' in 'inputs'. Also sets 'instruction' to be reachable from
   // itself. Returns whether the reachability set of 'instruction' changed.
-  bool SetReachabilityToUnion(
-      tensorflow::gtl::ArraySlice<const HloInstruction*> inputs,
+  //
+  // !!! THIS FUNCTION DOES NOT COMPUTE REACHABILITY !!! It sets the adjacency
+  // vector in the internal graph of this HloReachabilityMap for the given
+  // instruction and does not transitively update any other part of the
+  // adjacency matrix.
+  bool SetReachabilityToUnion(absl::Span<const HloInstruction* const> inputs,
+                              const HloInstruction* instruction);
+
+  // As above, but faster because it does not check if the reachability changed.
+  void FastSetReachabilityToUnion(
+      absl::Span<const HloInstruction* const> inputs,
       const HloInstruction* instruction);
 
   // Sets entry so that IsReachable(a, b) will return true
+  //
+  // !!! THIS FUNCTION DOES NOT COMPUTE REACHABILITY !!! It sets the adjacency
+  // matrix in the internal graph of this HloReachabilityMap to have an edge
+  // from a to b and does not transitively update any other part of the
+  // adjacency matrix.
   void SetReachable(const HloInstruction* a, const HloInstruction* b);
 
   // Returns true if "b" is reachable from "a"
+  //
+  // Note that this function only correctly answers queries about reachability
+  // if the set of edges that have been provided to this class are transitive.
   bool IsReachable(const HloInstruction* a, const HloInstruction* b) const;
 
   // Returns true if "b" is reachable from "a" or "a" is reachable from "b"
+  //
+  // Note that this function only correctly answers queries about reachability
+  // if the set of edges that have been provided to this class are transitive.
   bool IsConnected(const HloInstruction* a, const HloInstruction* b) const;
 
  private:
@@ -111,6 +138,11 @@ class HloReachabilityMap {
     return bit_vectors_[GetIndex(instruction)];
   }
 
+  // Helper for SetReachabilityToUnion/FastSetReachabilityToUnion.
+  void SetReachabilityToUnionHelper(
+      absl::Span<const HloInstruction* const> inputs,
+      const HloInstruction* instruction, BitVector* bit_vector);
+
   // Return the index of the given instruction. The value is used to index into
   // the vector of BitVectors and the BitVectors themselves.
   int GetIndex(const HloInstruction* instruction) const {
@@ -122,7 +154,7 @@ class HloReachabilityMap {
 
   // Dense assignment from HloInstruction* to number. These numbers index
   // into the bit_vectors_ vector and into the bits within a BitVector.
-  tensorflow::gtl::FlatMap<const HloInstruction*, int> indices_;
+  absl::flat_hash_map<const HloInstruction*, int> indices_;
 
   // Bitvectors holding the reachability to each instruction. The bit vector for
   // instruction X includes ones for each instruction which X is reachable from.
